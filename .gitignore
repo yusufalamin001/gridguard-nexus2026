@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Environment variables
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# GridGuard specific
+data/gridguard.duckdb
+data/raw/*
+data/processed/*
+*.pkl
+*.model
+*.joblib
+
+# OS
+.DS_Store
+Thumbs.db

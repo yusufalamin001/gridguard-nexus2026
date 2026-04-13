@@ -1,0 +1,21 @@
+# Data
+duckdb==0.10.0
+pandas==2.2.0
+numpy==1.26.0
+
+# Ingestion
+requests==2.31.0
+python-dotenv==1.0.0
+
+# ML
+xgboost==2.0.3
+scikit-learn==1.4.0
+
+# Dashboard
+streamlit==1.32.0
+plotly==5.19.0
+folium==0.16.0
+streamlit-folium==0.18.0
+
+# Geospatial
+osmnx==1.9.0
