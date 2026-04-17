@@ -2,11 +2,12 @@
 pipeline/features.py
 
 Engineers temporal and statistical features for the XGBoost model.
-Joins weather and SCADA telemetry, then calculates lag variables 
-and rolling averages to give the model historical context.
+Joins weather and SCADA telemetry, calculates lag variables, 
+and exports the final dataset for model training.
 """
 
 import duckdb
+import os
 from config import DUCKDB_PATH
 from logger import get_logger
 
@@ -21,10 +22,8 @@ def engineer_features() -> None:
     con = duckdb.connect(DUCKDB_PATH)
     
     try:
-        # Create a clean slate for our feature table
         con.execute("DROP TABLE IF EXISTS model_features")
         
-        # We use a CTAS (Create Table As Select) statement for blazing fast ETL
         feature_query = """
             CREATE TABLE model_features AS
             WITH joined_data AS (
@@ -39,7 +38,6 @@ def engineer_features() -> None:
                     w.temperature,
                     w.humidity,
                     s.failure_event,
-                    -- Extract basic temporal cycles
                     EXTRACT(HOUR FROM s.timestamp) as hour_of_day,
                     EXTRACT(ISODOW FROM s.timestamp) as day_of_week
                 FROM scada_telemetry s
@@ -50,12 +48,10 @@ def engineer_features() -> None:
             )
             SELECT 
                 *,
-                -- 1-Hour and 2-Hour Lags (What happened recently?)
                 LAG(voltage_kv, 1) OVER (PARTITION BY corridor_id ORDER BY timestamp) as volt_lag_1h,
                 LAG(frequency_hz, 1) OVER (PARTITION BY corridor_id ORDER BY timestamp) as freq_lag_1h,
                 LAG(voltage_kv, 2) OVER (PARTITION BY corridor_id ORDER BY timestamp) as volt_lag_2h,
                 
-                -- 3-Hour Rolling Averages (Is the system degrading over time?)
                 AVG(temperature) OVER (
                     PARTITION BY corridor_id 
                     ORDER BY timestamp 
@@ -69,13 +65,10 @@ def engineer_features() -> None:
                 ) as volt_roll_avg_3h
                 
             FROM joined_data
-            -- Exclude the first few rows per corridor where lag features are NULL
             QUALIFY volt_lag_2h IS NOT NULL 
         """
         
         con.execute(feature_query)
-        
-        # Verify row count
         count = con.execute("SELECT COUNT(*) FROM model_features").fetchone()[0]
         logger.info("Successfully engineered features. Created %d rows.", count)
         
@@ -85,9 +78,33 @@ def engineer_features() -> None:
     finally:
         con.close()
 
+def export_features() -> None:
+    """
+    Exports the engineered features to a static CSV file for the ML model.
+    """
+    logger.info("Exporting features to data/processed/model_features.csv...")
+    
+    # Ensure the target directory exists
+    os.makedirs("data/processed", exist_ok=True)
+    
+    con = duckdb.connect(DUCKDB_PATH)
+    try:
+        # DuckDB's native COPY command is highly optimized for flat file exports
+        con.execute("""
+            COPY (SELECT * FROM model_features ORDER BY corridor_id, timestamp) 
+            TO 'data/processed/model_features.csv' (HEADER, DELIMITER ',');
+        """)
+        logger.info("Successfully exported features to CSV.")
+    except Exception as e:
+        logger.error("Failed to export features: %s", e)
+        raise
+    finally:
+        con.close()
+
 def main():
     logger.info("=== Starting Feature Engineering Pipeline ===")
     engineer_features()
+    export_features()
     logger.info("=== Feature Engineering Completed Successfully ===")
 
 if __name__ == "__main__":
