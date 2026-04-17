@@ -61,50 +61,50 @@ def generate_telemetry(df: pd.DataFrame) -> pd.DataFrame:
     # Use a fixed random seed so our pipeline generates the exact same data every time
     np.random.seed(42)
     
-    for idx, row in df.iterrows():
-        # 1. Base values based on line type (330kV vs 132kV)
-        base_voltage = 330.0 if "330" in row['corridor_name'] else 132.0
-        base_freq = 50.0
-        temp = row['temperature'] if pd.notnull(row['temperature']) else 25.0
-        
-        # 2. Daily Peak Load Penalty (6 PM to 10 PM)
-        # As everyone goes home and turns on appliances, load spikes and voltage drops
+    for index, row in df.iterrows():
+        import random # Ensure random is available if not imported at the top
         hour = row['timestamp'].hour
-        is_peak = 18 <= hour <= 22
-        peak_multiplier = 0.95 if is_peak else 1.0 
+        temp = row['temperature']
         
-        # 3. Thermal Penalty (Resistance & De-rating)
-        if temp >= 35.0:
-            thermal_penalty = 0.88  # 12% drop due to severe heat/resistance
-        elif temp >= 30.0:
-            thermal_penalty = 0.96  # 4% drop
+        # 1. Base Physics (330kV vs 132kV lines)
+        if row['corridor_id'] in [1, 2, 4, 8]:
+            base_voltage = 330.0
         else:
-            thermal_penalty = 1.0
+            base_voltage = 132.0
             
-        # Add slight statistical noise to simulate real sensor variance
-        v_noise = np.random.normal(0, base_voltage * 0.01)
-        f_noise = np.random.normal(0, 0.15) 
+        # 2. Thermal Derating (Resistance increases with heat)
+        current_voltage = base_voltage
+        if temp > 35:
+            current_voltage = base_voltage * 0.95  # 5% sag
+        elif temp > 30:
+            current_voltage = base_voltage * 0.98  # 2% sag
+            
+        # 3. Base Frequency (Standard 50Hz with minor grid noise)
+        current_freq = 50.0 + random.uniform(-0.2, 0.2)
         
-        # Calculate normal operational telemetry
-        current_voltage = (base_voltage * peak_multiplier * thermal_penalty) + v_noise
-        current_freq = base_freq + f_noise
+        # 4. Target Injections (Historical Failures)
+        anomalies = [
+            (2, 10, 15, 15),  # Ikeja-Ota: Oct 15 at 3 PM (Heat stress)
+            (3, 11, 10, 19),  # Kano-Kaduna: Nov 10 at 7 PM (Peak load failure)
+            (4, 11, 25, 14),  # Egbin-Lagos Island: Nov 25 at 2 PM (Heat stress)
+            (1, 12, 29, 14)   # Benin-Onitsha: Dec 29 at 2 PM (The ultimate test case)
+        ]
         
-        # 4. The December 29th Collapse Injection (Benin-Onitsha, ID: 1)
-        # We simulate the cascading breaker failure triggering at 2 PM (14:00) during peak heat
-        is_collapse_day = (
-            row['corridor_id'] == 1 and 
-            row['timestamp'].month == 12 and 
-            row['timestamp'].day == 29 and
-            hour == 14  
-        )
+        is_collapse_hour = (
+            row['corridor_id'], 
+            row['timestamp'].month, 
+            row['timestamp'].day, 
+            hour
+        ) in anomalies
         
-        if is_collapse_day:
+        if is_collapse_hour:
             current_voltage = base_voltage * 0.70  # Massive 30% voltage drop
-            current_freq = 48.2  # Severe decay, well outside NERC 49.75Hz safe band
+            current_freq = 48.2  # Severe decay
             failure_events.append(1)
         else:
             failure_events.append(0)
             
+        # 5. THE MISSING APPENDS - Saving the calculations to the lists
         voltages.append(round(current_voltage, 2))
         frequencies.append(round(current_freq, 2))
         
