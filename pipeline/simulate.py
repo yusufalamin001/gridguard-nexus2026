@@ -62,12 +62,12 @@ def generate_telemetry(df: pd.DataFrame) -> pd.DataFrame:
     np.random.seed(42)
     
     for index, row in df.iterrows():
-        import random # Ensure random is available if not imported at the top
         hour = row['timestamp'].hour
-        temp = row['temperature']
+        temp = row['temperature'] or 28.0  # Guard against None — Nigerian average fallback
+        humidity = row.get('humidity') or 70.0  # Guard against None — Nigerian average fallback
         
-        # 1. Base Physics (330kV vs 132kV lines)
-        if row['corridor_id'] in [1, 2, 4, 8]:
+        # 1. Base Physics — 330kV corridors: 1,3,5,6,8 | 132kV corridors: 2,4,7
+        if row['corridor_id'] in [1, 3, 5, 6, 8]:
             base_voltage = 330.0
         else:
             base_voltage = 132.0
@@ -78,9 +78,17 @@ def generate_telemetry(df: pd.DataFrame) -> pd.DataFrame:
             current_voltage = base_voltage * 0.95  # 5% sag
         elif temp > 30:
             current_voltage = base_voltage * 0.98  # 2% sag
-            
-        # 3. Base Frequency (Standard 50Hz with minor grid noise)
-        current_freq = 50.0 + random.uniform(-0.2, 0.2)
+
+        # 2b. Humidity modifier — hot + humid compounds insulation stress
+        if humidity > 80 and temp > 30:
+            current_voltage *= 0.97  # additional 3% sag under hot + humid conditions
+
+        # 3. Base Frequency using numpy RNG for reproducibility
+        current_freq = 50.0 + np.random.uniform(-0.2, 0.2)
+
+        # 3b. Frequency instability under high humidity + heat
+        if humidity > 80 and temp > 30:
+            current_freq -= 0.1
         
         # 4. Target Injections (Historical Failures)
         anomalies = [
@@ -160,12 +168,18 @@ def main():
     Main orchestration function for the SCADA simulation pipeline.
     """
     logger.info("=== Starting SCADA Simulation Pipeline ===")
-    
-    df_baseline = extract_baseline_data()
-    df_simulated = generate_telemetry(df_baseline)
-    load_scada_data(df_simulated)
-    
-    logger.info("=== SCADA Simulation Completed Successfully ===")
+    try:
+        df_baseline = extract_baseline_data()
+        df_simulated = generate_telemetry(df_baseline)
+        load_scada_data(df_simulated)
+        logger.info(
+            "=== SCADA Simulation Complete — %d records, %d failure events ===",
+            len(df_simulated),
+            int(df_simulated['failure_event'].sum())
+        )
+    except Exception as e:
+        logger.error("=== SCADA Simulation Failed: %s ===", e)
+        raise
 
 if __name__ == "__main__":
     main()
