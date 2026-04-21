@@ -14,9 +14,11 @@ build/
 venv/
 env/
 .venv/
+.vscode
 
 # Environment variables
 .env
+
 
 # Jupyter
 .ipynb_checkpoints/
@@ -29,6 +31,7 @@ data/processed/*
 *.pkl
 *.model
 *.joblib
+model/artifacts
 
 # OS
 .DS_Store
