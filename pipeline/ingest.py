@@ -14,7 +14,8 @@ Usage:
 import duckdb
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
+import time
+from datetime import datetime
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -28,11 +29,10 @@ logger = get_logger("ingest")
 CORRIDORS = [
     {
         "id": 1,
-        "name": "Benin-Onitsha 330KV",
+        "name": "Benin-Onitsha 330kV",
         "disco_name": "Benin",
         "latitude": 6.3350,
         "longitude": 5.6270,
-        "economic_loss_per_hr": 4.2,
     },
     {
         "id": 2,
@@ -40,7 +40,7 @@ CORRIDORS = [
         "disco_name": "Ikeja",
         "latitude": 6.6018,
         "longitude": 3.3515,
-        "economic_loss_per_hr": 2.8,
+        "osm_radius": 50000,
     },
     {
         "id": 3,
@@ -48,7 +48,6 @@ CORRIDORS = [
         "disco_name": "Kano",
         "latitude": 11.9964,
         "longitude": 8.5167,
-        "economic_loss_per_hr": 1.9,
     },
     {
         "id": 4,
@@ -56,7 +55,7 @@ CORRIDORS = [
         "disco_name": "Eko",
         "latitude": 6.5244,
         "longitude": 3.3792,
-        "economic_loss_per_hr": 3.1,
+        "osm_radius": 50000,
     },
     {
         "id": 5,
@@ -64,7 +63,7 @@ CORRIDORS = [
         "disco_name": "Abuja",
         "latitude": 9.0765,
         "longitude": 7.3986,
-        "economic_loss_per_hr": 2.5,
+        "osm_radius": 50000,
     },
     {
         "id": 6,
@@ -72,7 +71,6 @@ CORRIDORS = [
         "disco_name": "Ibadan",
         "latitude": 8.9167,
         "longitude": 4.8333,
-        "economic_loss_per_hr": 1.4,
     },
     {
         "id": 7,
@@ -80,18 +78,28 @@ CORRIDORS = [
         "disco_name": "Port Harcourt",
         "latitude": 4.8156,
         "longitude": 7.0498,
-        "economic_loss_per_hr": 1.8,
+        "osm_radius": 50000,
     },
     {
         "id": 8,
         "name": "Kainji-Birnin Kebbi 330kV",
-        "disco_name": "Yola",
+        "disco_name": "Abuja",
         "latitude": 11.5890,
         "longitude": 4.2000,
-        "economic_loss_per_hr": 0.9,
     },
 ]
 
+# Minimum floor values by DisCo — prevents obviously wrong zeros
+DISCO_INFRA_FLOORS = {
+    "Ikeja":         {"hospital": 3, "school": 5, "market": 8},
+    "Eko":           {"hospital": 4, "school": 4, "market": 10},
+    "Abuja":         {"hospital": 2, "school": 3, "market": 4},
+    "Port Harcourt": {"hospital": 2, "school": 3, "market": 5},
+    "Benin":         {"hospital": 1, "school": 2, "market": 3},
+    "Ibadan":        {"hospital": 2, "school": 3, "market": 6},
+    "Kano":          {"hospital": 2, "school": 3, "market": 8},
+    "Yola":          {"hospital": 1, "school": 1, "market": 2},
+}
 
 def init_database() -> None:
     """
@@ -121,7 +129,6 @@ def init_database() -> None:
                 disco_name           VARCHAR NOT NULL,
                 latitude             DOUBLE  NOT NULL,
                 longitude            DOUBLE  NOT NULL,
-                economic_loss_per_hr DOUBLE  NOT NULL,
                 hospital_count       INTEGER DEFAULT 0,
                 school_count         INTEGER DEFAULT 0,
                 market_count         INTEGER DEFAULT 0,
@@ -146,16 +153,6 @@ def init_database() -> None:
         """)
         logger.info("Weather readings table ready")
 
-        # ── UNIQUE INDEX — duplicate prevention ────────────
-        try:
-            con.execute("""
-                CREATE UNIQUE INDEX idx_weather_unique
-                ON weather_readings (corridor_id, timestamp)
-            """)
-            logger.info("Unique index on weather_readings created")
-        except Exception:
-            # Index already exists — safe to continue
-            logger.debug("Unique index already exists — skipping")
 
     except Exception as e:
         logger.error("Database initialisation failed: %s", e)
@@ -176,14 +173,16 @@ def _fetch_osm_counts(lat: float, lon: float, radius: int = 20000) -> dict:
     # Overpass QL: 'nwr' means Nodes, Ways, and Relations. 
     # We only request 'tags' to keep the JSON payload extremely lightweight.
     overpass_query = f"""
-    [out:json][timeout:50];
-    (
-      nwr["amenity"="hospital"](around:{radius},{lat},{lon});
-      nwr["amenity"="school"](around:{radius},{lat},{lon});
-      nwr["amenity"="marketplace"](around:{radius},{lat},{lon});
-    );
-    out tags;
-    """
+[out:json][timeout:50];
+(
+  nwr["amenity"="hospital"](around:{radius},{lat},{lon});
+  nwr["amenity"="school"](around:{radius},{lat},{lon});
+  nwr["amenity"="marketplace"](around:{radius},{lat},{lon});
+  nwr["shop"="market"](around:{radius},{lat},{lon});
+  nwr["landuse"="retail"](around:{radius},{lat},{lon});
+);
+out tags;
+"""
     
     # Overpass strictly requires a custom User-Agent to avoid being blocked
     headers = {
@@ -196,12 +195,20 @@ def _fetch_osm_counts(lat: float, lon: float, radius: int = 20000) -> dict:
     elements = response.json().get("elements", [])
     
     # Initialize counts
-    counts = {"hospital": 0, "school": 0, "marketplace": 0}
-    
+    counts = {"hospital": 0, "school": 0, "market": 0}
+
     for element in elements:
-        amenity = element.get("tags", {}).get("amenity")
-        if amenity in counts:
-            counts[amenity] += 1
+        tags = element.get("tags", {})
+        amenity = tags.get("amenity", "")
+        shop = tags.get("shop", "")
+        landuse = tags.get("landuse", "")
+    
+        if amenity == "hospital":
+            counts["hospital"] += 1
+        elif amenity == "school":
+             counts["school"] += 1
+        elif ( amenity == "marketplace" or shop == "market" or landuse == "retail" ):
+            counts["market"] += 1
             
     return counts
 
@@ -218,31 +225,63 @@ def fetch_critical_infra(corridors_list: list) -> list:
         logger.info("Fetching OSM data for %s corridor...", corridor['name'])
         
         try:
-            counts = _fetch_osm_counts(corridor['latitude'], corridor['longitude'], radius=20000)
+            counts = _fetch_osm_counts(corridor['latitude'], corridor['longitude'], radius=corridor.get('osm_radius', 20000))
             
+            # Apply floor values if OSM returned all zeros
+            if sum(counts.values()) == 0:
+                floor = DISCO_INFRA_FLOORS.get(corridor['disco_name'], {})
+                counts['hospital'] = counts['hospital'] or floor.get('hospital', 0)
+                counts['school']   = counts['school']   or floor.get('school',   0)
+                counts['market']   = counts['market']   or floor.get('market',   0)
+                logger.warning(
+                    "OSM returned zeros for %s — applying DisCo floor values",
+                    corridor['name']
+                )
+
             # Mutate a copy of the dictionary to append our new features
             updated_corridor = corridor.copy()
             updated_corridor['hospital_count'] = counts['hospital']
             updated_corridor['school_count'] = counts['school']
-            updated_corridor['market_count'] = counts['marketplace']
+            updated_corridor['market_count'] = counts['market']
             
-            # Simple baseline calculation for consequence scoring
+            # Weights: hospitals=5 (life-critical), schools=2, markets=3
+            # Markets weighted higher than baseline due to economic significance
+            # of informal market sector in Nigerian DisCo zones
             updated_corridor['critical_infra_score'] = (
                 (counts['hospital'] * 5) + 
                 (counts['school'] * 2) + 
-                (counts['marketplace'] * 3)
+                (counts['market'] * 3)
             )
             
             updated_corridors.append(updated_corridor)
             logger.info("Success: %s -> %s", corridor['name'], counts)
+
+            # Pause between requests to respect rate limits
+            time.sleep(5)  # 5 seconds between each corridor
             
         except requests.exceptions.RequestException as e:
-            logger.error("Failed to fetch OSM data for %s after retries: %s", corridor['name'], e)
-            # Assign zeros if the API completely fails so the pipeline doesn't break
+            logger.error(
+                "Failed to fetch OSM data for %s after retries: %s",
+                corridor['name'], e
+            )
+            # Apply floor values on complete API failure
+            floor = DISCO_INFRA_FLOORS.get(corridor['disco_name'], {})
             updated_corridor = corridor.copy()
-            updated_corridor.update({'hospital_count': 0, 'school_count': 0, 'market_count': 0, 'critical_infra_score': 0})
+            updated_corridor['hospital_count']    = floor.get('hospital', 0)
+            updated_corridor['school_count']      = floor.get('school', 0)
+            updated_corridor['market_count']      = floor.get('market', 0)
+            updated_corridor['critical_infra_score'] = (
+                (floor.get('hospital', 0) * 5) +
+                (floor.get('school',   0) * 2) +
+                (floor.get('market',   0) * 3)
+            )
             updated_corridors.append(updated_corridor)
-            
+            logger.warning(
+                "Applied DisCo floor values for %s: %s",
+                corridor['name'],
+                floor
+            )
+            time.sleep(10)
     return updated_corridors
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=4, max=15), reraise=True)
@@ -293,22 +332,29 @@ def fetch_nasa_power(corridors_list: list, start_date: str = "20251001", end_dat
             
             # The keys are string timestamps like "2025100100" (YYYYMMDDHH)
             for ts_str in t2m_data.keys():
-                temp = t2m_data[ts_str]
-                humidity = rh2m_data.get(ts_str)
+                try:
+                    temp = t2m_data[ts_str]
+                    humidity = rh2m_data.get(ts_str)
                 
-                # Clean up NASA's missing value flags
-                if temp == -999.0: temp = None
-                if humidity == -999.0: humidity = None
+                    # Clean up NASA's missing value flags
+                    if temp == -999.0: temp = None
+                    if humidity == -999.0: humidity = None
                     
-                # Parse string into an actual Python datetime object
-                dt_obj = datetime.strptime(ts_str, "%Y%m%d%H")
+                    # Parse string into an actual Python datetime object
+                    dt_obj = datetime.strptime(ts_str, "%Y%m%d%H")
                 
-                weather_records.append({
-                    "corridor_id": corridor["id"],
-                    "timestamp": dt_obj,
-                    "temperature": temp,
-                    "humidity": humidity
-                })
+                    weather_records.append({
+                        "corridor_id": corridor["id"],
+                        "timestamp": dt_obj,
+                        "temperature": temp,
+                        "humidity": humidity
+                    })
+                except (ValueError, KeyError) as e:
+                    logger.warning(
+                        "Skipping malformed record %s for %s: %s",
+                         ts_str, corridor['name'], e
+                    )
+                    continue
             
             logger.info("Success: Downloaded %d hourly records for %s", len(t2m_data), corridor['name'])
             
@@ -332,13 +378,13 @@ def load_corridors(corridors_data: list) -> None:
     try:
         con.execute("""
             INSERT OR REPLACE INTO corridors (
-                id, name, disco_name, latitude, longitude, 
-                economic_loss_per_hr, hospital_count, school_count, 
+                id, name, disco_name, latitude, longitude,
+                hospital_count, school_count, 
                 market_count, critical_infra_score
             )
             SELECT 
-                id, name, disco_name, latitude, longitude, 
-                economic_loss_per_hr, hospital_count, school_count, 
+                id, name, disco_name, latitude, longitude,
+                hospital_count, school_count, 
                 market_count, critical_infra_score
             FROM df
         """)
@@ -387,18 +433,31 @@ def main():
     logger.info("=== Starting GridGuard Ingestion Pipeline ===")
     
     # Step 1: Ensure database schema exists
-    init_database()
+    try:
+        init_database()
     
     # Step 2: Fetch and enrich corridors with OSM infrastructure counts
-    updated_corridors = fetch_critical_infra(CORRIDORS)
-    load_corridors(updated_corridors)
+        updated_corridors = fetch_critical_infra(CORRIDORS)
+        load_corridors(updated_corridors)
     
     # Step 3: Fetch NASA POWER weather data for Q4 2025
     # The December 29 partial collapse occurred in this window
-    weather_data = fetch_nasa_power(updated_corridors, start_date="20251001", end_date="20251231")
-    load_weather(weather_data)
+        weather_data = fetch_nasa_power(
+            updated_corridors, 
+            start_date="20251001", 
+            end_date="20251231"
+        )
     
-    logger.info("=== Ingestion Pipeline Completed Successfully ===")
+        load_weather(weather_data)
+    
+        logger.info(
+            "=== Ingestion Pipeline Complete — %d corridors, %d weather records ===",
+            len(updated_corridors),       
+            len(weather_data)
+        )
+    except Exception as e:
+        logger.error("=== Ingestion Pipeline Failed: %s ===", e)
+        raise
 
 if __name__ == "__main__":
     main()
