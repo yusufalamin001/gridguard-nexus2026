@@ -3,49 +3,20 @@
 
 > Built for the **SPE NEXUS 3.0 Energy Hackathon** — Lagos State University, May 2026
 
+![GridGuard UI Demo](https://img.shields.io/badge/UI-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white) ![Data Engine](https://img.shields.io/badge/OLAP-DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black) ![Machine Learning](https://img.shields.io/badge/ML-XGBoost-136699?style=for-the-badge) 
+
 ---
 
 ## 🔍 The Problem
 
 Nigeria's national electricity grid operates in chronic stress. According to the **NERC Q4 2025 Quarterly Report**:
 
-- Grid frequency averaged **49.38Hz–50.65Hz** — outside the regulatory safe band of 49.75Hz–50.25Hz every single day
-- System voltage averaged **297.96kV–347.03kV** — outside the grid code range of 313.50kV–346.50kV
-- Plant availability factor was only **39.64%** — meaning over 60% of installed capacity was unavailable at any time
-- A partial grid collapse occurred on **29 December 2025**, caused by a single circuit breaker failure at Benin transmission station
+- Grid frequency averaged **49.38Hz–50.65Hz** — outside the regulatory safe band every single day.
+- System voltage averaged **297.96kV–347.03kV** — outside the grid code range.
+- Plant availability factor was only **39.64%** — meaning over 60% of installed capacity was unavailable.
+- A partial grid collapse occurred on **29 December 2025**, caused by a single circuit breaker failure at the Benin transmission station.
 
-When failures occur, Distribution Companies (DisCos) and the Nigerian Independent System Operator (NISO) respond **reactively** — dispatching crews only after the outage has already cascaded. There is no operational system that:
-
-1. Predicts failure windows **before** they occur
-2. Ranks which zones to protect and restore **first** given limited repair crews
-
-The economic cost is severe. The weighted average ATC&C (Aggregate Technical, Commercial and Collection) loss across all DisCos in Q4 2025 was **34.90%** — translating to a cumulative revenue loss of **₦139.19 billion** in a single quarter.
-
----
-
-## 💡 The Solution
-
-**GridGuard** is a three-layer data system that transforms raw grid telemetry into actionable crew dispatch decisions.
-
-```
-Raw Grid Data → Prediction Layer → Consequence Scoring → Dispatch Queue
-```
-
-### Layer 1 — Prediction
-Ingests time-series data on grid frequency, voltage variance, plant availability factor, and DisCo energy offtake. An **XGBoost classifier** outputs a probability score per transmission corridor:
-
-> *"78% probability of partial grid collapse within the next 6 hours on the Benin–Onitsha corridor"*
-
-### Layer 2 — Consequence Scoring
-Weights each at-risk corridor by:
-- **Critical infrastructure exposure** (hospitals, markets, schools via OpenStreetMap)
-- **DisCo ATC&C loss rate** (commercially stressed zones prioritized differently)
-- **Economic loss per hour** (₦/kWh unserved — based on World Bank Nigeria enterprise survey data)
-
-### Layer 3 — Dispatch Queue
-Given real-world constraints (2–4 field crews per district), outputs a **ranked action list**:
-
-> *"You have 3 crews. Send Crew 1 to Benin corridor — 78% failure risk, serves Stella Maris Hospital and 12,000 customers, estimated loss ₦4.2M/hour. Crew 2 to..."*
+When failures occur, Distribution Companies (DisCos) and the Transmission Company of Nigeria (TCN) respond **reactively** — dispatching crews only after the outage has already cascaded. The economic cost is severe. The weighted average ATC&C loss across all DisCos in Q4 2025 was **34.90%** — translating to a cumulative revenue loss of **₦139.19 billion** in a single quarter.
 
 ---
 
@@ -57,177 +28,176 @@ GridGuard answers the operational question utility managers actually face:
 
 **"Given my limited crews, where do I send them first to protect the most value?"**
 
-This reframes the output from a data science result to a **decision support tool** — which is what DISCO control room operators and NERC regulators actually need.
+This reframes the output from a pure data science result into a **decision support tool** — which is what DISCO control room operators and NERC regulators actually need to minimize economic bleeding and protect human life.
+
+---
+
+## 💡 The Solution: A Dual ETL & ELT Architecture
+
+**GridGuard** is an AI-powered Predictive Dispatch System built on a modern data stack. It transforms raw grid telemetry into actionable crew dispatch decisions using two distinct data paradigms.
+
+### Layer 1 — Physical Prediction (The ETL Pipeline)
+To predict physical grid failures, we use a traditional **Extract, Transform, Load (ETL)** approach. 
+- **Extract:** We pull raw historical weather data from the **NASA POWER API** and critical infrastructure density from the **OpenStreetMap (OSM)** Overpass API.
+- **Transform:** The pipeline engineers complex features in Python, calculating thermal stress multipliers, humidity-driven voltage sags, and rolling temporal averages.
+- **Load & Predict:** The clean, transformed telemetry is loaded into DuckDB, where an **XGBoost** model reads it to calculate a live failure probability score (0-100%) for every transmission corridor based on localized grid physics.
+
+### Layer 2 — Financial Consequence (The ELT Pipeline)
+Instead of static approximations for financial loss, GridGuard uses a modern **Extract, Load, Transform (ELT)** paradigm.
+- **Extract & Load:** Live DisCo performance data is streamed via Parquet files directly from **Hugging Face** and loaded raw into our vectorized **DuckDB** database.
+- **Transform (On the Fly):** At the exact moment the dashboard loads, DuckDB runs lightning-fast `COALESCE` SQL joins. It dynamically calculates real-time ATC&C losses and computes the exact Naira loss per hour (₦/kWh unserved) if a specific line collapses.
+
+### Layer 3 — Optimized Dispatch (The Streamlit UI)
+Given real-world constraints (e.g., 3 field crews available), the system merges the Physical Risk (Layer 1) and the Financial Consequence (Layer 2) to output a mathematically optimized dispatch queue.
+
+> *"Dispatch Crew Alpha to Benin-Onitsha 330kV: 78% failure risk, serves 1 Hospital and 2 Markets, preventing an estimated loss of ₦4.2M/hour."*
 
 ---
 
 ## 🗂️ Project Structure
 
-```
-gridguard/
+```text
+gridguard-nexus2026/
 │
 ├── data/
-│   ├── raw/                  # Raw data from NERC reports and APIs
-│   ├── processed/            # Cleaned and feature-engineered data
-│   └── gridguard.duckdb      # DuckDB database
+│   └── gridguard.db                # Local DuckDB OLAP database (Gitignored)
 │
 ├── pipeline/
-│   ├── ingest.py             # Data ingestion from NERC, NASA POWER, OSM
-│   ├── features.py           # Feature engineering (lag features, rolling stats)
-│   └── simulate.py           # Synthetic SCADA data generator
+│   ├── ingest.py                   # ETL: REST API ingestion (OSM, NASA POWER)
+│   ├── ingest_hf_disco.py          # ELT: Pipeline for Hugging Face financial data
+│   ├── simulate.py                 # Physics-based SCADA generation (thermal/voltage derating)
+│   └── features.py                 # Feature engineering for XGBoost
 │
 ├── model/
-│   ├── train.py              # XGBoost classifier training
-│   ├── evaluate.py           # Model evaluation and metrics
-│   └── predict.py            # Inference pipeline
+│   ├── train.py                    # XGBoost classifier training
+│   ├── evaluate.py                 # Model evaluation and metrics
+│   └── predict.py                  # Live inference pipeline
 │
 ├── scoring/
-│   ├── consequence.py        # Economic consequence scoring per corridor
-│   └── dispatch.py           # Crew dispatch queue generator
+│   ├── consequence.py              # SQL-based Economic consequence transformation
+│   └── dispatch.py                 # Crew dispatch queue generator
 │
 ├── dashboard/
-│   └── app.py                # Streamlit dashboard
+│   └── app.py                      # Custom HTML/CSS Streamlit UI with Folium/Plotly
 │
-├── notebooks/
-│   └── exploration.ipynb     # EDA and feature analysis
-│
+├── config.py                       # Global environment variables and database paths
 ├── requirements.txt
 ├── .env.example
-└── README.md
+└── README.md                                                                                                                
 ```
 
----
-
-## 📊 Data Sources
-
-| Source | Variables | Access |
-|--------|-----------|--------|
-| NERC Quarterly Reports | Frequency, voltage, TLF, DisCo ATC&C, plant availability | Free — nerc.gov.ng |
-| NASA POWER API | Temperature, humidity (transformer thermal stress) | Free — no API key required |
-| OpenStreetMap Overpass API | Hospitals, markets, schools per feeder zone | Free — open data |
-| World Bank Nigeria Enterprise Survey | Cost of power interruption (₦/kWh unserved) | Free — published report |
-| Synthetic SCADA data | Simulated feeder-level frequency/voltage readings | Generated from NERC baselines |
-
-> **Transparency note:** Real feeder-level SCADA data from Nigerian DisCos is not publicly available. All model training uses synthetic data generated from NERC-published statistics and clearly documented as simulated. The architecture is designed to accept real SCADA data as a direct replacement without changing the pipeline structure.
-
----
-
-## 🛠️ Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| Language | Python 3.11+ |
-| Data Storage | DuckDB |
-| ML Model | XGBoost |
-| Dashboard | Streamlit |
-| Data Ingestion | CCXT-style REST clients, Pandas |
-| Geospatial | OSMnx, Folium |
-| Environment | Python-dotenv |
-
----
-
-## 🚀 How to Run Locally
+### 🚀 Running Locally
 
 ### 1. Clone the Repository
-
 ```bash
 git clone https://github.com/YOUR_USERNAME/gridguard-nexus2026.git
 cd gridguard-nexus2026
 ```
 
-### 2. Create a Virtual Environment
-
+### 2. Set Up Virtual Environment
 ```bash
 python -m venv venv
-source venv/bin/activate        # Mac/Linux
-venv\Scripts\activate           # Windows
-```
 
-### 3. Install Dependencies
+# Windows
+venv\Scripts\activate
 
-```bash
+# Mac/Linux
+source venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
-### 4. Set Up Environment Variables
+### 3. Configure Environment
+Create a `.env` file in the root directory and define the database path:
 
 ```bash
-cp .env.example .env
-# No API keys required for NASA POWER or OpenStreetMap
-# Edit .env only if you have real SCADA data sources to connect
+GRIDGUARD_DB_PATH=data/gridguard.db
 ```
 
-### 5. Run the Data Pipeline
+### 4. Execute the Data Pipelines
+> ⚠️ Ensure you use the `-m` flag to maintain module paths.
 
 ```bash
-# Step 1: Ingest and store raw data
-python pipeline/ingest.py
+# ETL: Extract & Load physical parameters (NASA/OSM)
+python -m pipeline.ingest
 
-# Step 2: Generate synthetic SCADA data (if no real data available)
-python pipeline/simulate.py
+# ELT: Extract & Load financial parameters (Hugging Face)
+python -m pipeline.ingest_hf_disco
 
-# Step 3: Engineer features
-python pipeline/features.py
+# Simulate grid physics and voltage sags
+python -m pipeline.simulate
 ```
 
-### 6. Train the Model
+### 5. Train Model & Generate Predictions
 
 ```bash
-python model/train.py
-python model/evaluate.py
+# Train the XGBoost classifier
+python -m model.train
+
+# Run inference on live telemetry
+python -m model.predict
 ```
 
-### 7. Launch the Dashboard
+### 6. Run the Scoring & Dispatch Engine
 
+```bash
+# Calculate dynamic economic consequences
+python -m scoring.consequence
+
+# Generate the optimized dispatch queue
+python -m scoring.dispatch
+```
+### 7. Launch the Control Room Dashboard
 ```bash
 streamlit run dashboard/app.py
 ```
-
-Open your browser at `http://localhost:8501`
-
 ---
 
-## 📈 Key Metrics from Evidence Base
+## 🏗️ Production Architecture Roadmap
 
-| Metric | Value | Source |
-|--------|-------|--------|
-| Grid frequency violation | Every day in Q4 2025 | NERC Q4 2025, Section 2.2.2 |
-| Plant availability factor | 39.64% | NERC Q4 2025, Section 2.1.2 |
-| Aggregate ATC&C loss | 34.90% | NERC Q4 2025, Section 2.3.5 |
-| Cumulative revenue loss (Q4) | ₦139.19 billion | NERC Q4 2025, Table 9 |
-| Kaduna DisCo ATC&C | 69.45% (target: 21.32%) | NERC Q4 2025, Table 9 |
-| Dec 2025 grid collapse cause | Benin-Onitsha 330kV breaker failure | NERC Q4 2025, Table 3 |
+GridGuard is currently built on a local stack but is designed to scale into a full enterprise-grade system.
+
+### 1. Pipeline Orchestration
+- **Current:** Manual execution (`python -m pipeline.ingest`)
+- **Production:** Use Apache Airflow or Prefect to orchestrate DAGs and automate data ingestion workflows.
+
+### 2. Real-Time Streaming (SCADA Integration)
+- **Current:** Batch processing using local DuckDB tables  
+- **Production:** Replace simulations with real-time streaming via Apache Kafka or AWS Kinesis, ingesting MQTT data from substations.
+
+### 3. Cloud Data Warehousing & Transformation
+- **Current:** Local DuckDB database  
+- **Production:** Migrate to Snowflake or Google BigQuery  
+- Use **dbt** for scalable SQL transformations within the warehouse.
+
+### 4. MLOps & Model Registry
+- **Current:** Local XGBoost `.pkl` files  
+- **Production:** Integrate MLflow for:
+  - Experiment tracking  
+  - Model versioning  
+  - Drift monitoring  
+  - Continuous training pipelines  
+
+### 5. Frontend Deployment
+- **Current:** Local Streamlit server  
+- **Production:**  
+  - Containerize with Docker  
+  - Deploy via AWS Fargate or Google Cloud Run  
+  - Enable high availability for control room operators  
 
 ---
 
 ## 👥 Team
 
-| Name | Role |
-|------|------|
-| Yusuf Al-amin | Data Engineer & ML Lead |
-| [Name] | Electrical/Power Engineering — Domain Expert |
-| [Name] | Frontend & Dashboard Developer |
-| [Name] | Business Impact & Pitch Lead |
-
----
-
-## 🏆 Hackathon
-
-**Event:** SPE NEXUS 3.0 Energy Policy and Innovation Conference  
-**Host:** SPE Lagos State University Student Chapter  
-**Date:** May 2, 2026  
-**Category:** Energy Innovation Hackathon  
+| Name          | Role                                         |
+|---------------|----------------------------------------------|
+| Yusuf Al-amin | Data Engineer & ML Lead                      |
+| Azeez Wasiu      | Electrical/Power Engineering (Domain Expert) |
+| Alade Rahmat   | Frontend & UI/UX Designer                    |
+| Obanor Mercy  | Business Impact & Pitch Lead                 |
 
 ---
 
 ## 📄 License
 
-MIT License — open for educational and research use.
-
----
-
-## 📬 Contact
-
-For questions about this project, open an issue on this repository.
-# gridguard-nexus2026
-Predictive Grid Failure &amp; Dispatch Optimization System
+This project is licensed under the **MIT License** — open for educational and research use.
