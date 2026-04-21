@@ -2,6 +2,8 @@
 duckdb==0.10.0
 pandas==2.2.0
 numpy==1.26.0
+datasets==2.18.0
+huggingface_hub==0.22.0
 
 # Ingestion
 requests==2.31.0
