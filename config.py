@@ -13,12 +13,6 @@ NASA_POWER_BASE_URL = os.getenv(
     "https://power.larc.nasa.gov/api/temporal/hourly/point"
 )
 
-# Nigeria bounding box for API calls
-NIGERIA_LAT_MIN = 4.0
-NIGERIA_LAT_MAX = 14.0
-NIGERIA_LON_MIN = 2.7
-NIGERIA_LON_MAX = 15.0
-
 # Grid code thresholds (from NERC / Nigerian Grid Code)
 FREQ_NOMINAL_HZ       = 50.0
 FREQ_LOWER_NORMAL     = 49.75
@@ -34,17 +28,29 @@ PREDICTION_WINDOW_HRS = 6
 RANDOM_SEED           = 42
 TEST_SIZE             = 0.2
 
-# DisCo ATC&C loss rates from NERC Q4 2025 (Table 9)
-DISCO_ATCC = {
-    "Abuja":        30.99,
-    "Benin":        44.50,
-    "Eko":          14.20,
-    "Enugu":        38.62,
-    "Ibadan":       42.51,
-    "Ikeja":        16.33,
-    "Jos":          64.84,
-    "Kaduna":       69.45,
-    "Kano":         44.12,
-    "Port Harcourt":33.01,
-    "Yola":         52.77,
-}
+# Feature columns for XGBoost — must match column names in model_features table
+# Order matters: keep consistent between train.py and predict.py
+FEATURE_COLS = [
+    'voltage_kv',
+    'frequency_hz',
+    'freq_deviation',
+    'freq_deviation_abs',
+    'voltage_deviation',
+    'temperature',
+    'humidity',
+    'hour_of_day',
+    'day_of_week',
+    'economic_loss_per_hr',
+    'critical_infra_score',
+    'volt_lag_1h',
+    'volt_lag_2h',
+    'volt_roll_avg_3h',
+    'freq_lag_1h',
+    'freq_lag_3h',
+    'freq_roll_avg_6h',
+    'freq_volatility_6h',
+    'temp_roll_avg_3h',
+]
+
+# Target variable — the column XGBoost learns to predict
+TARGET_COL = 'failure_event'
