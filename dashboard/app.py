@@ -9,7 +9,7 @@ import duckdb
 import os
 
 # ── Embedded logo (base64) ────────────────────────────────────────────────────
-LOGO_B64 = "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"
+LOGO_B64 = "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"
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -236,20 +236,111 @@ if "system_active" not in st.session_state:
 if "available_crews" not in st.session_state:
     st.session_state.available_crews = 3
 
-# ── Static data ───────────────────────────────────────────────────────────────
+# ── Static data + live loaders ────────────────────────────────────────────────
 DISCOS = [
     "All 11 Discos", "Abuja DisCo", "Benin DisCo", "Eko DisCo", "Enugu DisCo",
     "Ibadan DisCo", "Ikeja DisCo", "Jos DisCo", "Kaduna DisCo",
     "Kano DisCo", "Port Harcourt DisCo", "Yola DisCo",
 ]
-CORRIDORS = [
-    {"name": "Benin-Onitsha 330kV",  "risk": 78, "loss": 4.2, "infra": "Hospital (1)",   "crew": "Alpha", "lat": 6.335, "lon": 5.627, "disco": "Benin DisCo"},
-    {"name": "Ikeja-Ota 132kV",      "risk": 61, "loss": 2.8, "infra": "School (2)",     "crew": "Beta",  "lat": 6.600, "lon": 3.230, "disco": "Ikeja DisCo"},
-    {"name": "Kano-Kaduna 330kV",    "risk": 54, "loss": 1.9, "infra": "Industry Zone",  "crew": "Gamma", "lat": 11.10, "lon": 7.720, "disco": "Kano DisCo"},
-    {"name": "Egbin-Lagos 132kV",    "risk": 22, "loss": 0.5, "infra": "Residential",    "crew": "Delta", "lat": 6.545, "lon": 3.715, "disco": "Eko DisCo"},
-    {"name": "Shiroro-Kaduna 330kV", "risk": 41, "loss": 1.1, "infra": "Airport",        "crew": "Echo",  "lat": 10.50, "lon": 7.100, "disco": "Kaduna DisCo"},
-    {"name": "Alaoji-Onitsha 132kV", "risk": 33, "loss": 0.8, "infra": "Market",         "crew": "Zeta",  "lat": 5.020, "lon": 7.000, "disco": "Enugu DisCo"},
-]
+
+
+@st.cache_data(ttl=30)
+def load_dispatch_data() -> list:
+    """
+    Loads live corridor risk data from dispatch_queue.csv (pipeline output)
+    and enriches it with physical metadata from the DuckDB corridors table.
+
+    Columns used from DuckDB corridors:
+        name, disco_name, latitude, longitude,
+        hospital_count, school_count, market_count
+
+    Falls back to demo data if the pipeline has not been run yet so the
+    dashboard always renders — even during a live presentation.
+    """
+    crew_names = ["Alpha", "Beta", "Gamma", "Delta", "Echo", "Zeta", "Eta", "Theta"]
+    db_path    = os.environ.get("GRIDGUARD_DB_PATH", "data/gridguard.duckdb")
+
+    try:
+        import pandas as pd
+        queue_path = "data/processed/dispatch_queue.csv"
+        if not os.path.exists(queue_path):
+            raise FileNotFoundError("dispatch_queue.csv not found — run the pipeline first")
+
+        df = pd.read_csv(queue_path)
+
+        # ── Enrich with geo + infra counts from DuckDB ──────────────────────
+        con = duckdb.connect(db_path, read_only=True)
+        meta = con.execute("""
+            SELECT
+                name,
+                disco_name,
+                latitude,
+                longitude,
+                COALESCE(hospital_count, 0) AS hospital_count,
+                COALESCE(school_count,   0) AS school_count,
+                COALESCE(market_count,   0) AS market_count
+            FROM corridors
+        """).df()
+        con.close()
+
+        # Merge on corridor name
+        df = df.rename(columns={"Corridor": "name"})
+        df = df.merge(meta, on="name", how="left")
+
+        # ── Issue 3: Format infra counts into human-readable display string ─
+        def fmt_infra(row):
+            parts = []
+            if row.get("hospital_count", 0):
+                parts.append(f"Hospital ({int(row['hospital_count'])})")
+            if row.get("school_count", 0):
+                parts.append(f"School ({int(row['school_count'])})")
+            if row.get("market_count", 0):
+                parts.append(f"Market ({int(row['market_count'])})")
+            return ", ".join(parts) if parts else "Residential"
+
+        df["infra"] = df.apply(fmt_infra, axis=1)
+
+        # ── Rename to internal dict shape ────────────────────────────────────
+        df = df.rename(columns={
+            "AI Probability (%)": "risk",
+            "NGN Loss/hr":        "loss",
+            "disco_name":         "disco",
+            "latitude":           "lat",
+            "longitude":          "lon",
+        })
+
+        corridors = []
+        for i, row in df.iterrows():
+            # disco_name in DB is plain e.g. "Benin" — append " DisCo" only if missing
+            disco_raw = str(row.get("disco", ""))
+            disco = disco_raw if disco_raw.endswith("DisCo") else disco_raw + " DisCo"
+            corridors.append({
+                "name":  row.get("name",  "Unknown"),
+                "risk":  float(row.get("risk", 0)),
+                "loss":  float(row.get("loss", 0)),
+                "infra": row.get("infra", "—"),
+                "crew":  crew_names[i] if i < len(crew_names) else f"Crew {i+1}",
+                "lat":   float(row.get("lat", 9.08)),
+                "lon":   float(row.get("lon", 8.67)),
+                "disco": disco,
+            })
+        return corridors
+
+    except Exception as e:
+        import logging
+        logging.getLogger("gridguard.dashboard").warning(
+            "Could not load dispatch data (%s) — using demo data", e
+        )
+        # Demo fallback — ensures dashboard renders during presentation
+        # even if the pipeline hasn't been run yet
+        return [
+            {"name": "Benin-Onitsha 330kV",  "risk": 78, "loss": 4.2, "infra": "Hospital (1), Market (3)", "crew": "Alpha", "lat": 6.335, "lon": 5.627, "disco": "Benin DisCo"},
+            {"name": "Ikeja-Ota 132kV",       "risk": 61, "loss": 2.8, "infra": "School (2)",               "crew": "Beta",  "lat": 6.600, "lon": 3.230, "disco": "Ikeja DisCo"},
+            {"name": "Kano-Kaduna 330kV",     "risk": 54, "loss": 1.9, "infra": "Industry Zone",            "crew": "Gamma", "lat": 11.10, "lon": 7.720, "disco": "Kano DisCo"},
+            {"name": "Egbin-Lagos 132kV",     "risk": 22, "loss": 0.5, "infra": "Residential",              "crew": "Delta", "lat": 6.545, "lon": 3.715, "disco": "Eko DisCo"},
+            {"name": "Shiroro-Kaduna 330kV",  "risk": 41, "loss": 1.1, "infra": "Airport",                  "crew": "Echo",  "lat": 10.50, "lon": 7.100, "disco": "Kaduna DisCo"},
+            {"name": "Alaoji-Onitsha 132kV",  "risk": 33, "loss": 0.8, "infra": "Market",                   "crew": "Zeta",  "lat": 5.020, "lon": 7.000, "disco": "Enugu DisCo"},
+        ]
 
 # ── TOP HEADER ────────────────────────────────────────────────────────────────
 active = system_is_active()
@@ -364,6 +455,9 @@ with left_col:
 
 # ── MAIN PANEL ────────────────────────────────────────────────────────────────
 with main_col:
+
+    # Load live corridor data from pipeline (dispatch_queue.csv + DuckDB)
+    CORRIDORS = load_dispatch_data()
 
     # Filter by disco + threshold
     if selected_disco == "All 11 Discos":
