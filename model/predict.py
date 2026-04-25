@@ -93,7 +93,7 @@ def write_risk_scores(results_df: pd.DataFrame) -> None:
                 corridor_name           = EXCLUDED.corridor_name,
                 timestamp               = EXCLUDED.timestamp,
                 failure_probability_pct = EXCLUDED.failure_probability_pct,
-                scored_at               = current_timestamp
+                scored_at               = now()
         """)
 
         logger.info(
