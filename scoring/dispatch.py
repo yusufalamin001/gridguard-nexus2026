@@ -52,7 +52,7 @@ def generate_dispatch_queue() -> None:
     # Select and rename columns for dashboard display
     final_output = dispatch_df[[
         'Priority',
-        'corridor_name',
+        'disco_name',
         'failure_probability_pct',
         'risk_score',
         'economic_loss_per_hr',
