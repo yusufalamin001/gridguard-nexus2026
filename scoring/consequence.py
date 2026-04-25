@@ -105,7 +105,7 @@ def calculate_consequences() -> None:
 
     logger.info(
         "Raw consequence scores saved — top risk: %s (score: %.1f)",
-        df.sort_values('risk_score', ascending=False).iloc[0]['corridor_name'],
+        df.sort_values('risk_score', ascending=False).iloc[0]['disco_name'],
         df['risk_score'].max()
     )
 
