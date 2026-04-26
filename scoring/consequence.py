@@ -117,11 +117,20 @@ def calculate_consequences(demo: bool = False) -> None:
         df['failure_probability_pct'] / 100
     ) * df['economic_loss_per_hr']
 
-    df['infra_multiplier'] = 1 + (df['critical_infra_score'] * 0.05)
+    # Normalize critical_infra_score to 0-1 range before applying multiplier.
+    # Raw values from OpenStreetMap counts can be in the hundreds or thousands
+    # (e.g. 5239 hospital+school+market total) — using them raw blows up the
+    # risk score by 260x. Normalising caps the infra bonus at 20% above base,
+    # keeping final scores in the 0-55 range as intended.
+    max_infra = df['critical_infra_score'].max()
+    if max_infra > 0:
+        df['infra_multiplier'] = 1 + ((df['critical_infra_score'] / max_infra) * 0.20)
+    else:
+        df['infra_multiplier'] = 1.0
 
     df['risk_score'] = (
         df['risk_exposure_naira'] * df['infra_multiplier']
-    ).round(1)
+    ).round(2)
 
     os.makedirs("data/processed", exist_ok=True)
     export_path = "data/processed/raw_consequence_scores.csv"

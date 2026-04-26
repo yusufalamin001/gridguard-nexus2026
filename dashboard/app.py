@@ -371,16 +371,18 @@ with left_col:
     st.markdown("**Available Crews:**")
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
-        if st.button("−", use_container_width=True):
+        if st.button("−", use_container_width=True, key="crew_minus"):
             st.session_state.available_crews = max(0, st.session_state.available_crews - 1)
+            st.rerun()
     with c2:
         st.markdown(f"""<div style="text-align:center;background:#1a2e45;border:1px solid #1e3a5f;
             border-radius:6px;padding:0.4rem;font-family:'Rajdhani',sans-serif;
             font-size:1.5rem;font-weight:700;color:#e0eaf5;margin-top:2px;">
             {st.session_state.available_crews}</div>""", unsafe_allow_html=True)
     with c3:
-        if st.button("+", use_container_width=True):
+        if st.button("＋", use_container_width=True, key="crew_plus"):
             st.session_state.available_crews += 1
+            st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
     tog_label = "🔴 Deactivate System" if active else "🟢 Activate System"
@@ -470,9 +472,6 @@ with main_col:
     est_loss     = sum(c["loss"] for c in filtered if c["risk"] >= 60)
     crews_needed = min(at_risk, st.session_state.available_crews)
 
-    # Pull SCADA data here so KPI deltas can use it
-    scada = load_scada_context()
-
     def fmt_delta(val, unit="", decimals=1, invert=False):
         """Arrow + value for KPI delta line. invert=True means higher = worse."""
         if val is None:
@@ -489,26 +488,33 @@ with main_col:
     # ── KPI CARDS ──
     st.markdown('<div class="section-label">Grid Status</div>', unsafe_allow_html=True)
     k1, k2, k3, k4 = st.columns(4, gap="small")
+
+    # Contextual subtexts derived directly from filtered corridor data
+    total_monitored  = len(CORRIDORS)
+    highest_name     = highest["name"].replace(" 330kV","").replace(" 132kV","")
+    high_risk_loss   = sum(c["loss"] for c in filtered if c["risk"] >= 60)
+    delta_crew       = crews_needed - st.session_state.available_crews
+
     with k1:
         st.markdown(f'''<div class="kpi-card red">
             <div class="kpi-label">Corridors at Risk</div>
             <div class="kpi-value">{at_risk}</div>
-            <div class="kpi-delta">{fmt_delta(scada["delta_at_risk"], "", 0, invert=True)}</div>
+            <div class="kpi-delta">of {total_monitored} corridors monitored</div>
         </div>''', unsafe_allow_html=True)
     with k2:
         st.markdown(f'''<div class="kpi-card red">
             <div class="kpi-label">Highest Risk Score</div>
             <div class="kpi-value">{highest["risk"]}%</div>
-            <div class="kpi-delta">{fmt_delta(scada["delta_freq"], " Hz", 3)}</div>
+            <div class="kpi-delta" title="{highest["name"]}">{highest_name[:18]}</div>
         </div>''', unsafe_allow_html=True)
     with k3:
+        corridor_word = "corridor" if at_risk == 1 else "corridors"
         st.markdown(f'''<div class="kpi-card amber">
             <div class="kpi-label">Est. Loss / Hour</div>
-            <div class="kpi-value">₦{est_loss:.1f}M</div>
-            <div class="kpi-delta">{fmt_delta(scada["delta_voltage"], " kV", 1)}</div>
+            <div class="kpi-value">&#x20A6;{est_loss:.1f}M</div>
+            <div class="kpi-delta">across {at_risk} high-risk {corridor_word}</div>
         </div>''', unsafe_allow_html=True)
     with k4:
-        delta_crew = crews_needed - st.session_state.available_crews
         st.markdown(f'''<div class="kpi-card green">
             <div class="kpi-label">Crews Needed</div>
             <div class="kpi-value">{crews_needed}</div>
@@ -583,7 +589,9 @@ with main_col:
             </div>"""
             m.get_root().html.add_child(folium.Element(no_risk_html))
 
-        st_folium(m, use_container_width=True, height=360, returned_objects=[])
+        # Key is tied to filter state only — map won't re-render on crew +/- clicks
+        map_key = f"risk_map_{selected_disco}_{risk_threshold}_{len(filtered)}"
+        st_folium(m, use_container_width=True, height=360, returned_objects=[], key=map_key)
 
     with chart_col:
         st.markdown('<div class="section-label">Risk Score Chart</div>', unsafe_allow_html=True)
@@ -624,7 +632,9 @@ with main_col:
     # ── DISPATCH QUEUE ──
     st.markdown('<div class="section-label">Dispatch Queue — Ranked by Consequence</div>', unsafe_allow_html=True)
 
-    dispatch = sorted(filtered, key=lambda x: x["risk"], reverse=True)
+    # Preserve CSV order — already ranked by consequence score (prob × loss × infra)
+    # from scoring/dispatch.py. Re-sorting by raw risk% would contradict the header.
+    dispatch = filtered  # CSV order = consequence rank
 
     def priority_badge(risk):
         if risk >= 60: return '<span class="badge-red">▲ HIGH</span>'
@@ -635,9 +645,11 @@ with main_col:
         return ["priority-1","priority-2","priority-3"][min(i,2)]
 
     if dispatch:
+        crew_names = ["Alpha", "Beta", "Gamma", "Delta", "Echo", "Zeta", "Eta", "Theta"]
         rows_html = ""
         for i, c in enumerate(dispatch[:5]):
-            crew_assigned = c["crew"] if i < st.session_state.available_crews else "—"
+            # Crew assigned by display rank (Alpha=highest priority) not CSV order
+            crew_assigned = crew_names[i] if i < st.session_state.available_crews else "—"
             risk_c = '#ef5350' if c["risk"]>=60 else '#ffa726' if c["risk"]>=30 else '#66bb6a'
             rows_html += f"""<tr class="{row_class(i)}">
                 <td style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:1.1rem;">{i+1}</td>
