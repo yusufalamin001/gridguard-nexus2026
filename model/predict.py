@@ -8,11 +8,13 @@ Writes results to the risk_scores table in DuckDB for the dashboard.
 
 Usage:
     python model/predict.py
+    python model/predict.py --demo
 """
 
 import argparse
 import json
 import os
+import numpy as np
 import pandas as pd
 import xgboost as xgb
 import duckdb
@@ -86,35 +88,24 @@ def get_demo_telemetry() -> pd.DataFrame:
     all 8 corridors simultaneously for dashboard demonstration.
 
     Injected collapse events (from simulate.py):
-        Corridor 1 (Benin-Onitsha) → Dec 29 14:00  → fetched AT collapse    (~99%)
-        Corridor 2 (Ikeja-Ota)     → Oct 15 15:00  → fetched 5hr before     (~97%)
-        Corridor 3 (Kano-Kaduna)   → Nov 10 19:00  → fetched 9hr before     (~40-60%)
-        Corridor 4 (Egbin-Lagos)   → Nov 25 14:00  → fetched 4hr before     (~50-70%)
-        Corridors 5-8              → no collapse    → fetched at peak stress (~5-30%)
-
-    The varying offsets expose the model's probability buildup curve rather than
-    just the binary collapse moment — making the dashboard far more informative.
-
-    Usage:
-        python model/predict.py --demo
+        Corridor 1 (Benin-Onitsha) -> Dec 29 14:00  -> fetched AT collapse    (~99%)
+        Corridor 2 (Ikeja-Ota)     -> Oct 15 15:00  -> fetched 1hr before     (~97%)
+        Corridor 3 (Kano-Kaduna)   -> Nov 10 19:00  -> fetched 4hrs before    (~40-70%)
+        Corridor 4 (Egbin-Lagos)   -> Nov 25 14:00  -> fetched 4hrs before    (~40-70%)
+        Corridors 5-8              -> own events     -> fetched at peak stress (~20-40%)
     """
-    # (corridor_id, target_timestamp) — chosen to produce probability variety
-    # Corridor 1: AT the Dec 29 collapse hour                → ~99.97%
-    # Corridor 2: 1hr before Oct 15 collapse (14:00 → 15:00)→ ~97%
-    # Corridor 3: 4hrs before Nov 10 collapse (15:00 → 19:00)→ intermediate
-    # Corridor 4: 4hrs before Nov 25 collapse (10:00 → 14:00)→ intermediate
     DEMO_TARGETS = {
-        1: '2025-12-29 14:00:00',  # AT collapse hour        → ~99.97%
-        2: '2025-10-15 14:00:00',  # 1hr before collapse     → ~97%
-        3: '2025-11-10 15:00:00',  # 4hrs before collapse    → ~40-70%
-        4: '2025-11-25 10:00:00',  # 4hrs before collapse    → ~40-70%
+        1: '2025-12-29 14:00:00',  # AT collapse hour        -> ~99.97%
+        2: '2025-10-15 14:00:00',  # 1hr before collapse     -> ~97%
+        3: '2025-11-10 15:00:00',  # 4hrs before collapse    -> ~40-70%
+        4: '2025-11-25 10:00:00',  # 4hrs before collapse    -> ~40-70%
     }
 
     con = duckdb.connect(DUCKDB_PATH)
     try:
         frames = []
 
-        # For corridors with targeted timestamps — specific buildup offsets
+        # Corridors with targeted timestamps
         for corridor_id, ts in DEMO_TARGETS.items():
             row = con.execute("""
                 SELECT * FROM model_features
@@ -124,7 +115,6 @@ def get_demo_telemetry() -> pd.DataFrame:
             """, [corridor_id, ts]).df()
 
             if row.empty:
-                # Fallback: grab the closest available timestamp
                 row = con.execute("""
                     WITH closest AS (
                         SELECT *,
@@ -143,25 +133,37 @@ def get_demo_telemetry() -> pd.DataFrame:
 
             frames.append(row)
 
-        # For corridors without targeted timestamps — use their peak stress hour
-        other_ids = [i for i in range(1, 9) if i not in DEMO_TARGETS]
-        if other_ids:
-            placeholders = ', '.join(['?' for _ in other_ids])
-            peak_rows = con.execute(f"""
-                WITH ranked AS (
-                    SELECT *,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY corridor_id
-                            ORDER BY
-                                ABS(freq_deviation) DESC,
-                                ABS(voltage_deviation) DESC
-                        ) AS rn
-                    FROM model_features
-                    WHERE corridor_id IN ({placeholders})
+        # Corridors 5-8 — fetch 8 hours BEFORE their own collapse event
+        # so they show ambient stress scores (20-40%), not collapse scores (99%).
+        # These timestamps are pre-ramp, showing realistic chronic stress levels.
+        OTHER_TARGETS = {
+            5: '2025-10-22 08:00:00',   # 8hrs before Shiroro collapse ramp
+            6: '2025-11-03 12:00:00',   # 8hrs before Jebba collapse ramp
+            7: '2025-10-28 05:00:00',   # 8hrs before Afam collapse ramp
+            8: '2025-11-18 07:00:00',   # 8hrs before Kainji collapse ramp
+        }
+        for corridor_id, ts in OTHER_TARGETS.items():
+            row = con.execute("""
+                SELECT * FROM model_features
+                WHERE corridor_id = ?
+                  AND timestamp = ?
+                LIMIT 1
+            """, [corridor_id, ts]).df()
+
+            if row.empty:
+                # Fallback: any non-failure hour for this corridor
+                row = con.execute("""
+                    SELECT * FROM model_features
+                    WHERE corridor_id = ?
+                      AND failure_event < 0.5
+                    ORDER BY timestamp
+                    LIMIT 1
+                """, [corridor_id]).df()
+                logger.warning(
+                    "Corridor %d: pre-ramp timestamp %s not found — using fallback",
+                    corridor_id, ts
                 )
-                SELECT * FROM ranked WHERE rn = 1
-            """, other_ids).df()
-            frames.append(peak_rows)
+            frames.append(row)
 
         df = pd.concat(frames, ignore_index=True)
 
@@ -171,11 +173,11 @@ def get_demo_telemetry() -> pd.DataFrame:
         )
         for _, row in df.iterrows():
             logger.info(
-                "  Corridor %d (%s): %s — failure_event=%d",
+                "  Corridor %d (%s): %s — failure_event=%g",
                 int(row['corridor_id']),
                 row['corridor_name'],
                 row['timestamp'],
-                int(row['failure_event'])
+                row['failure_event']
             )
         return df
 
@@ -190,10 +192,6 @@ def write_risk_scores(results_df: pd.DataFrame) -> None:
     """
     Writes failure probability predictions to the risk_scores table in DuckDB.
     Dashboard reads from this table for live display.
-
-    Args:
-        results_df: DataFrame with corridor_id, corridor_name,
-                    timestamp, failure_probability_pct
     """
     con = duckdb.connect(DUCKDB_PATH)
     try:
@@ -239,17 +237,16 @@ def run_inference(demo: bool = False) -> pd.DataFrame:
     Loads telemetry, runs XGBoost inference, writes results to DuckDB.
 
     Args:
-        demo: If True, uses the Dec 29 2025 collapse window instead of the
-              latest timestamp. Pass --demo at the command line for presentations.
+        demo: If True, uses the Dec 29 2025 collapse window instead of
+              the latest timestamp. Pass --demo for presentations.
 
     Returns:
-        pd.DataFrame with corridor_id, corridor_name, timestamp,
-        failure_probability_pct, and at_risk flag sorted by risk descending.
+        pd.DataFrame sorted by failure_probability_pct descending.
     """
     logger.info("Starting live prediction engine%s...",
                 " [DEMO MODE — Dec 29 2025]" if demo else "")
 
-    # 1. Load telemetry — live or demo window
+    # 1. Load telemetry
     if demo:
         live_df = get_demo_telemetry()
         logger.info(
@@ -263,6 +260,11 @@ def run_inference(demo: bool = False) -> pd.DataFrame:
         raise ValueError("Empty telemetry — run the pipeline first.")
 
     # 2. Load trained model artifact
+    # Load via xgb.Booster (not XGBClassifier) because train.py saves via
+    # get_booster().save_model() to work around the imbalanced-learn/XGBoost
+    # version conflict where SMOTE leaves _estimator_type undefined.
+    # Raw Booster output is a margin score — sigmoid converts to [0,1],
+    # mathematically identical to what predict_proba() does internally.
     if not os.path.exists(MODEL_PATH):
         logger.error(
             "Model artifact not found at %s — run model/train.py first.",
@@ -270,23 +272,23 @@ def run_inference(demo: bool = False) -> pd.DataFrame:
         )
         raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
 
-    model = xgb.XGBClassifier()
-    model.load_model(MODEL_PATH)
+    booster = xgb.Booster()
+    booster.load_model(MODEL_PATH)
     logger.info("Model artifact loaded from %s", MODEL_PATH)
 
     # 3. Load optimal decision threshold
     threshold = load_threshold()
 
     # 4. Run inference
-    # predict_proba returns [[P(0), P(1)], ...] — we take column 1 (failure)
+    # Booster.predict() returns raw margin scores — sigmoid converts to [0,1]
     X_live        = live_df[FEATURE_COLS]
-    probabilities = model.predict_proba(X_live)[:, 1]
+    dmatrix       = xgb.DMatrix(X_live)
+    margins       = booster.predict(dmatrix, output_margin=True)
+    probabilities = 1.0 / (1.0 + np.exp(-margins))   # sigmoid -> [0,1]
 
     # 5. Build results DataFrame
     results_df = live_df[['corridor_id', 'corridor_name', 'timestamp']].copy()
     results_df['failure_probability_pct'] = (probabilities * 100).round(2)
-
-    # at_risk flag uses the optimised threshold — not the raw 50% default
     results_df['at_risk'] = (probabilities >= threshold).astype(int)
 
     results_df = results_df.sort_values(
@@ -319,14 +321,14 @@ def main() -> None:
 
     Usage:
         python model/predict.py           # live mode — latest telemetry
-        python model/predict.py --demo    # demo mode — Dec 29 2025 collapse event
+        python model/predict.py --demo    # demo mode — Dec 29 2025 collapse
     """
     parser = argparse.ArgumentParser(description="GridGuard Inference Engine")
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Run in demo mode — replays the Dec 29 2025 Benin-Onitsha collapse event "
-             "instead of using the latest telemetry timestamp. Use this for presentations."
+        help="Replay the Dec 29 2025 Benin-Onitsha collapse event "
+             "instead of using the latest telemetry. Use for presentations."
     )
     args = parser.parse_args()
 
