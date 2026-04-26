@@ -40,7 +40,6 @@ CORRIDORS = [
         "disco_name": "Ikeja",
         "latitude": 6.6018,
         "longitude": 3.3515,
-        "osm_radius": 50000,
     },
     {
         "id": 3,
@@ -55,7 +54,6 @@ CORRIDORS = [
         "disco_name": "Eko",
         "latitude": 6.5244,
         "longitude": 3.3792,
-        "osm_radius": 50000,
     },
     {
         "id": 5,
@@ -63,7 +61,6 @@ CORRIDORS = [
         "disco_name": "Abuja",
         "latitude": 9.0765,
         "longitude": 7.3986,
-        "osm_radius": 50000,
     },
     {
         "id": 6,
@@ -78,7 +75,6 @@ CORRIDORS = [
         "disco_name": "Port Harcourt",
         "latitude": 4.8156,
         "longitude": 7.0498,
-        "osm_radius": 50000,
     },
     {
         "id": 8,
