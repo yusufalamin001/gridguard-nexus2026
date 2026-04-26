@@ -12,6 +12,7 @@ python-dotenv==1.0.0
 # ML
 xgboost==2.0.3
 scikit-learn==1.4.0
+imbalanced-learn==0.14.1
 
 # Dashboard
 streamlit==1.32.0
